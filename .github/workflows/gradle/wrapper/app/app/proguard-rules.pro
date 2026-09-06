@@ -1,0 +1,2 @@
+-keep class com.example.notificationbadge.** { *; }
+-keep class com.google.gson.** { *; }
