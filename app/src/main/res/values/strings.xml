@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<resources>
+
+    <string name="app_name">Notification Badge Prototype</string>
+    <string name="title_main">Notification Badge</string>
+
+    <string name="open_notification_access">
+        Notification access
+    </string>
+
+    <string name="open_overlay_access">
+        Display over other apps
+    </string>
+
+    <string name="app_list">
+        Choose apps
+    </string>
+
+    <string name="open_accessibility_access">
+        Accessibility access
+    </string>
+
+    <string name="accessibility_service_desc">
+        Find app icons in the launcher and attach notification badges to them.
+    </string>
+
+    <string name="calibration">
+        Calibrate badge
+    </string>
+
+    <string name="start_badges">
+        Start badges
+    </string>
+
+    <string name="stop_badges">
+        Stop badges
+    </string>
+
+    <string name="notification_access_desc">
+        Allow this app to read notifications so it can count them.
+    </string>
+
+    <string name="overlay_access_desc">
+        Allow this app to draw small badges above the launcher.
+    </string>
+
+    <string name="no_overlay">
+        Overlay permission is required.
+    </string>
+
+    <string name="saved">
+        Saved
+    </string>
+
+</resources>
