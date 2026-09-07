@@ -2,51 +2,60 @@ package com.tbilx98.notificationbadge;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
-import android.graphics.Color;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.view.Gravity;
-import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.TextView;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class BadgeAccessibilityService extends AccessibilityService {
 
+    public static final String ACTION_SELECTION_CHANGED =
+            "com.tbilx98.notificationbadge.SELECTION_CHANGED";
+
     private final Handler handler =
             new Handler(Looper.getMainLooper());
 
-    private WindowManager wm;
-    private TextView debugView;
+    private WindowManager windowManager;
 
-    private final Runnable hideRunnable =
-            new Runnable() {
-                @Override
-                public void run() {
-                    if (debugView != null) {
-                        debugView.setVisibility(View.GONE);
-                    }
-                }
-            };
+    private final Map<String, Integer> notificationCounts =
+            new HashMap<>();
+
+    private final List<TextView> badgeViews =
+            new ArrayList<>();
+
+    private BroadcastReceiver receiver;
+
+    private Runnable scanRunnable;
 
     @Override
     public void onServiceConnected() {
 
         super.onServiceConnected();
 
-        wm = (WindowManager)
-                getSystemService(WINDOW_SERVICE);
+        windowManager =
+                (WindowManager) getSystemService(WINDOW_SERVICE);
 
-        AccessibilityServiceInfo info =
-                getServiceInfo();
+        AccessibilityServiceInfo info = getServiceInfo();
 
         if (info != null) {
 
@@ -73,16 +82,89 @@ public class BadgeAccessibilityService extends AccessibilityService {
             setServiceInfo(info);
         }
 
-        createDebugView();
+        registerBadgeReceiver();
 
-        handler.postDelayed(
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        scanScreen();
+        scanRunnable = new Runnable() {
+            @Override
+            public void run() {
+                scanAndDrawBadges();
+            }
+        };
+
+        scheduleScan(500);
+    }
+
+    private void registerBadgeReceiver() {
+
+        receiver = new BroadcastReceiver() {
+
+            @Override
+            public void onReceive(
+                    Context context,
+                    Intent intent) {
+
+                if (intent == null) {
+                    return;
+                }
+
+                String action = intent.getAction();
+
+                if (ACTION_SELECTION_CHANGED.equals(action)) {
+
+                    scheduleScan(100);
+
+                    return;
+                }
+
+                if (NotificationListener.ACTION_BADGE_CHANGED
+                        .equals(action)) {
+
+                    String pkg =
+                            intent.getStringExtra(
+                                    NotificationListener.EXTRA_PACKAGE
+                            );
+
+                    int count =
+                            intent.getIntExtra(
+                                    NotificationListener.EXTRA_COUNT,
+                                    0
+                            );
+
+                    if (pkg != null) {
+
+                        if (count > 0) {
+
+                            notificationCounts.put(
+                                    pkg,
+                                    count
+                            );
+
+                        } else {
+
+                            notificationCounts.remove(
+                                    pkg
+                            );
+                        }
                     }
-                },
-                500
+
+                    scheduleScan(100);
+                }
+            }
+        };
+
+        IntentFilter filter = new IntentFilter();
+
+        filter.addAction(
+                ACTION_SELECTION_CHANGED
+        );
+
+        filter.addAction(
+                NotificationListener.ACTION_BADGE_CHANGED
+        );
+
+        registerReceiver(
+                receiver,
+                filter
         );
     }
 
@@ -94,199 +176,61 @@ public class BadgeAccessibilityService extends AccessibilityService {
             return;
         }
 
-        handler.removeCallbacks(hideRunnable);
+        scheduleScan(150);
+    }
+
+    private void scheduleScan(long delay) {
+
+        if (scanRunnable == null) {
+            return;
+        }
+
+        handler.removeCallbacks(
+                scanRunnable
+        );
 
         handler.postDelayed(
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        scanScreen();
-                    }
-                },
-                100
+                scanRunnable,
+                delay
         );
     }
 
-    private void createDebugView() {
+    private void scanAndDrawBadges() {
 
-        if (wm == null) {
-            return;
-        }
-
-        if (Build.VERSION.SDK_INT >= 23
-                && !Settings.canDrawOverlays(this)) {
-            return;
-        }
-
-        debugView =
-                new TextView(this);
-
-        debugView.setTextColor(
-                Color.WHITE
-        );
-
-        debugView.setTextSize(
-                12
-        );
-
-        debugView.setGravity(
-                Gravity.CENTER_VERTICAL
-        );
-
-        debugView.setPadding(
-                16,
-                10,
-                16,
-                10
-        );
-
-        debugView.setBackgroundColor(
-                Color.argb(
-                        220,
-                        0,
-                        0,
-                        0
-                )
-        );
-
-        debugView.setText(
-                "Accessibility debug..."
-        );
-
-        WindowManager.LayoutParams lp =
-                new WindowManager.LayoutParams(
-                        WindowManager.LayoutParams.WRAP_CONTENT,
-                        WindowManager.LayoutParams.WRAP_CONTENT,
-                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-                        PixelFormat.TRANSLUCENT
-                );
-
-        lp.gravity =
-                Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-
-        lp.y = 40;
-
-        try {
-
-            wm.addView(
-                    debugView,
-                    lp
-            );
-
-        } catch (Exception ignored) {
-
-            debugView = null;
-        }
-    }
-
-    private void scanScreen() {
-
-        if (debugView == null) {
-            return;
-        }
+        clearBadges();
 
         AccessibilityNodeInfo root =
                 getRootInActiveWindow();
 
         if (root == null) {
-
-            showDebug(
-                    "ROOT = NULL\n"
-                            + "Accessibility cannot read current screen"
-            );
-
             return;
         }
 
         try {
 
-            CharSequence packageName =
-                    root.getPackageName();
+            Set<String> selected =
+                    Prefs.getSelected(this);
 
-            String pkg =
-                    packageName == null
-                            ? "NULL"
-                            : packageName.toString();
+            if (selected == null
+                    || selected.isEmpty()) {
 
-            ScanResult result =
-                    new ScanResult();
+                return;
+            }
 
-            collectNodes(
+            Map<String, String> labels =
+                    getSelectedLabels(selected);
+
+            if (labels.isEmpty()) {
+                return;
+            }
+
+            Set<String> alreadyFound =
+                    new HashSet<>();
+
+            findIcons(
                     root,
-                    result,
-                    0
-            );
-
-            StringBuilder text =
-                    new StringBuilder();
-
-            text.append(
-                    "PACKAGE:\n"
-            );
-
-            text.append(
-                    pkg
-            );
-
-            text.append(
-                    "\n\nNODES: "
-            );
-
-            text.append(
-                    result.nodeCount
-            );
-
-            text.append(
-                    "\nTEXT: "
-            );
-
-            text.append(
-                    result.textCount
-            );
-
-            text.append(
-                    "\nCLICKABLE: "
-            );
-
-            text.append(
-                    result.clickableCount
-            );
-
-            text.append(
-                    "\n\nNAMES:\n"
-            );
-
-            int shown = 0;
-
-            for (String name :
-                    result.names) {
-
-                text.append(
-                        name
-                );
-
-                text.append(
-                        "\n"
-                );
-
-                shown++;
-
-                if (shown >= 12) {
-                    break;
-                }
-            }
-
-            if (shown == 0) {
-
-                text.append(
-                        "(none)"
-                );
-            }
-
-            showDebug(
-                    text.toString()
+                    labels,
+                    alreadyFound
             );
 
         } finally {
@@ -295,24 +239,59 @@ public class BadgeAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void collectNodes(
+    private Map<String, String> getSelectedLabels(
+            Set<String> selected) {
+
+        Map<String, String> result =
+                new HashMap<>();
+
+        PackageManager pm =
+                getPackageManager();
+
+        for (String pkg : selected) {
+
+            try {
+
+                ApplicationInfo ai =
+                        pm.getApplicationInfo(
+                                pkg,
+                                0
+                        );
+
+                CharSequence label =
+                        pm.getApplicationLabel(ai);
+
+                if (label != null) {
+
+                    String name =
+                            normalize(
+                                    label.toString()
+                            );
+
+                    if (!name.isEmpty()) {
+
+                        result.put(
+                                pkg,
+                                name
+                        );
+                    }
+                }
+
+            } catch (Exception ignored) {
+            }
+        }
+
+        return result;
+    }
+
+    private void findIcons(
             AccessibilityNodeInfo node,
-            ScanResult result,
-            int depth) {
+            Map<String, String> labels,
+            Set<String> alreadyFound) {
 
         if (node == null) {
             return;
         }
-
-        if (depth > 20) {
-            return;
-        }
-
-        if (result.nodeCount >= 2000) {
-            return;
-        }
-
-        result.nodeCount++;
 
         CharSequence text =
                 node.getText();
@@ -320,41 +299,74 @@ public class BadgeAccessibilityService extends AccessibilityService {
         CharSequence description =
                 node.getContentDescription();
 
-        if ((text != null
-                && text.length() > 0)
-                || (description != null
-                && description.length() > 0)) {
+        String value = "";
 
-            result.textCount++;
-
-            String value;
-
-            if (description != null
-                    && description.length() > 0) {
-
-                value =
-                        description.toString();
-
-            } else {
-
-                value =
-                        text.toString();
-            }
+        if (description != null
+                && description.length() > 0) {
 
             value =
-                    value.trim();
+                    normalize(
+                            description.toString()
+                    );
 
-            if (!value.isEmpty()) {
+        } else if (text != null
+                && text.length() > 0) {
 
-                result.names.add(
-                        value
-                );
-            }
+            value =
+                    normalize(
+                            text.toString()
+                    );
         }
 
-        if (node.isClickable()) {
+        if (!value.isEmpty()) {
 
-            result.clickableCount++;
+            for (Map.Entry<String, String> entry :
+                    labels.entrySet()) {
+
+                String pkg =
+                        entry.getKey();
+
+                String label =
+                        entry.getValue();
+
+                if (alreadyFound.contains(pkg)) {
+                    continue;
+                }
+
+                if (value.equals(label)
+                        || value.contains(label)
+                        || label.contains(value)) {
+
+                    Rect bounds =
+                            new Rect();
+
+                    node.getBoundsInScreen(
+                            bounds
+                    );
+
+                    if (bounds.width() > 0
+                            && bounds.height() > 0) {
+
+                        Integer count =
+                                notificationCounts.get(
+                                        pkg
+                                );
+
+                        if (count != null
+                                && count > 0) {
+
+                            addBadge(
+                                    bounds,
+                                    count
+                            );
+
+                            alreadyFound.add(
+                                    pkg
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         int childCount =
@@ -369,10 +381,10 @@ public class BadgeAccessibilityService extends AccessibilityService {
 
             if (child != null) {
 
-                collectNodes(
+                findIcons(
                         child,
-                        result,
-                        depth + 1
+                        labels,
+                        alreadyFound
                 );
 
                 child.recycle();
@@ -380,29 +392,137 @@ public class BadgeAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void showDebug(
+    private String normalize(
             String text) {
 
-        if (debugView == null) {
+        return text
+                .trim()
+                .toLowerCase()
+                .replaceAll("\\s+", " ");
+    }
+
+    private void addBadge(
+            Rect bounds,
+            int count) {
+
+        if (windowManager == null) {
             return;
         }
 
-        debugView.setText(
-                text
+        TextView badge =
+                new TextView(this);
+
+        badge.setText(
+                count > 99
+                        ? "99+"
+                        : String.valueOf(count)
         );
 
-        debugView.setVisibility(
-                View.VISIBLE
+        badge.setTextColor(
+                0xFFFFFFFF
         );
 
-        handler.removeCallbacks(
-                hideRunnable
+        badge.setTextSize(
+                9
         );
 
-        handler.postDelayed(
-                hideRunnable,
-                5000
+        badge.setGravity(
+                Gravity.CENTER
         );
+
+        int size =
+                dp(20);
+
+        GradientDrawable background =
+                new GradientDrawable();
+
+        background.setColor(
+                0xFFFF3B30
+        );
+
+        background.setShape(
+                GradientDrawable.OVAL
+        );
+
+        badge.setBackground(
+                background
+        );
+
+        WindowManager.LayoutParams lp =
+                new WindowManager.LayoutParams(
+                        size,
+                        size,
+                        WindowManager.LayoutParams
+                                .TYPE_APPLICATION_OVERLAY,
+                        WindowManager.LayoutParams
+                                .FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams
+                                .FLAG_NOT_TOUCHABLE
+                                | WindowManager.LayoutParams
+                                .FLAG_LAYOUT_NO_LIMITS,
+                        PixelFormat.TRANSLUCENT
+                );
+
+        lp.gravity =
+                Gravity.TOP | Gravity.LEFT;
+
+        lp.x =
+                Math.max(
+                        0,
+                        bounds.right - size
+                );
+
+        lp.y =
+                Math.max(
+                        0,
+                        bounds.top - size / 3
+                );
+
+        try {
+
+            windowManager.addView(
+                    badge,
+                    lp
+            );
+
+            badgeViews.add(
+                    badge
+            );
+
+        } catch (Exception ignored) {
+        }
+    }
+
+    private int dp(int value) {
+
+        return (int)
+                (value
+                        * getResources()
+                                .getDisplayMetrics()
+                                .density
+                        + 0.5f);
+    }
+
+    private void clearBadges() {
+
+        if (windowManager == null) {
+            return;
+        }
+
+        for (TextView view :
+                badgeViews) {
+
+            try {
+
+                windowManager.removeView(
+                        view
+                );
+
+            } catch (Exception ignored) {
+            }
+        }
+
+        badgeViews.clear();
     }
 
     @Override
@@ -416,33 +536,22 @@ public class BadgeAccessibilityService extends AccessibilityService {
                 null
         );
 
-        if (debugView != null
-                && wm != null) {
+        clearBadges();
+
+        if (receiver != null) {
 
             try {
 
-                wm.removeView(
-                        debugView
+                unregisterReceiver(
+                        receiver
                 );
 
             } catch (Exception ignored) {
             }
 
-            debugView = null;
+            receiver = null;
         }
 
         super.onDestroy();
-    }
-
-    private static class ScanResult {
-
-        int nodeCount = 0;
-
-        int textCount = 0;
-
-        int clickableCount = 0;
-
-        Set<String> names =
-                new HashSet<>();
     }
 }
