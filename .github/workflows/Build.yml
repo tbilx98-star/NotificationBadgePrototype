@@ -23,7 +23,7 @@ jobs:
           echo "App structure:"
           find app -maxdepth 3 -type f | sort
 
-      -       - name: Set up JDK 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
