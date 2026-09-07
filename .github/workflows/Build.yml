@@ -28,7 +28,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -42,9 +41,10 @@ jobs:
             "build-tools;35.0.0"
 
       - name: Build debug APK
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+        uses: gradle/gradle-build-action@v3
+        with:
+          arguments: assembleDebug --no-daemon --stacktrace
+          gradle-version: '8.7'
 
       - name: Find APK
         run: |
