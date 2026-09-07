@@ -3,13 +3,11 @@ package com.tbilx98.notificationbadge;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.ComponentName;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -41,10 +39,13 @@ public class BadgeAccessibilityService extends AccessibilityService {
     private final Map<String, Integer> notificationCounts =
             new HashMap<>();
 
+    private final Map<String, TextView> badgeViews =
+            new HashMap<>();
+
     private final Map<String, Rect> lastPositions =
             new HashMap<>();
 
-    private final Map<String, TextView> badgeViews =
+    private final Map<String, Integer> missingScans =
             new HashMap<>();
 
     private Set<String> selectedPackages =
@@ -52,41 +53,30 @@ public class BadgeAccessibilityService extends AccessibilityService {
 
     private String homePackage;
 
-    private boolean isHomeVisible = false;
-
-    private boolean scanRunning = false;
+    private boolean homeVisible = false;
 
     private Runnable scanRunnable;
 
     @Override
     public void onServiceConnected() {
-
         super.onServiceConnected();
 
         windowManager =
-                (WindowManager)
-                        getSystemService(WINDOW_SERVICE);
+                (WindowManager) getSystemService(WINDOW_SERVICE);
 
         configureAccessibility();
 
-        selectedPackages =
-                Prefs.getSelected(this);
+        selectedPackages = Prefs.getSelected(this);
 
         findHomePackage();
 
-        scanRunnable =
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        scanRunning = false;
-                        scanHome();
-                    }
-                };
+        scanRunnable = new Runnable() {
+            @Override
+            public void run() {
+                scanHome();
+            }
+        };
 
-        /*
-         * Yêu cầu NotificationListener gửi lại
-         * toàn bộ notification đang tồn tại.
-         */
         sendRefreshRequest();
 
         scheduleScan(500);
@@ -94,8 +84,7 @@ public class BadgeAccessibilityService extends AccessibilityService {
 
     private void configureAccessibility() {
 
-        AccessibilityServiceInfo info =
-                getServiceInfo();
+        AccessibilityServiceInfo info = getServiceInfo();
 
         if (info == null) {
             return;
@@ -109,20 +98,31 @@ public class BadgeAccessibilityService extends AccessibilityService {
         info.feedbackType =
                 AccessibilityServiceInfo.FEEDBACK_GENERIC;
 
-        info.notificationTimeout =
-                300;
+        info.notificationTimeout = 200;
 
         info.flags |=
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
 
-        if (Build.VERSION.SDK_INT >= 21) {
-
+        if (android.os.Build.VERSION.SDK_INT >= 21) {
             info.flags |=
                     AccessibilityServiceInfo
                             .FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
         }
 
         setServiceInfo(info);
+    }
+
+    /*
+     * Đây là hàm bị thiếu trong file cũ.
+     */
+    private void scheduleScan(long delay) {
+
+        if (scanRunnable == null) {
+            return;
+        }
+
+        handler.removeCallbacks(scanRunnable);
+        handler.postDelayed(scanRunnable, delay);
     }
 
     private void findHomePackage() {
@@ -142,7 +142,6 @@ public class BadgeAccessibilityService extends AccessibilityService {
                     );
 
             if (component != null) {
-
                 homePackage =
                         component.getPackageName();
             }
@@ -156,13 +155,9 @@ public class BadgeAccessibilityService extends AccessibilityService {
         try {
 
             Intent intent =
-                    new Intent(
-                            ACTION_REFRESH_REQUEST
-                    );
+                    new Intent(ACTION_REFRESH_REQUEST);
 
-            intent.setPackage(
-                    getPackageName()
-            );
+            intent.setPackage(getPackageName());
 
             sendBroadcast(intent);
 
@@ -178,28 +173,25 @@ public class BadgeAccessibilityService extends AccessibilityService {
             return;
         }
 
-        /*
-         * Window state changed:
-         * xác định lại có đang ở Home hay không.
-         */
-        if (event.getEventType()
-                == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+        int type = event.getEventType();
+
+        if (type ==
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
 
             updateHomeState();
 
-            scheduleScan(100);
+            scheduleScan(150);
 
             return;
         }
 
         /*
-         * Content changed xảy ra liên tục khi
-         * vuốt Home, animation, icon refresh...
+         * Khi vuốt giữa các trang Home,
+         * launcher phát rất nhiều CONTENT_CHANGED.
          *
-         * Không quét ngay lập tức từng event.
-         * Gom chúng lại thành một lần quét.
+         * Không quét ngay từng event.
          */
-        scheduleScan(180);
+        scheduleScan(250);
     }
 
     private void updateHomeState() {
@@ -224,17 +216,14 @@ public class BadgeAccessibilityService extends AccessibilityService {
             boolean home =
                     isHomePackage(currentPackage);
 
-            if (home != isHomeVisible) {
+            if (home != homeVisible) {
 
-                isHomeVisible = home;
+                homeVisible = home;
 
                 if (!home) {
-
                     clearAllBadges();
-
                 } else {
-
-                    scheduleScan(100);
+                    scheduleScan(150);
                 }
             }
 
@@ -248,34 +237,23 @@ public class BadgeAccessibilityService extends AccessibilityService {
             String packageName) {
 
         if (packageName == null
-                || packageName.isEmpty()) {
+                || packageName.length() == 0) {
 
             return false;
         }
 
-        if (homePackage != null
-                && packageName.equals(homePackage)) {
+        if (homePackage != null) {
 
-            return true;
+            return packageName.equals(
+                    homePackage
+            );
         }
 
-        /*
-         * Một số clone iPhone không trả về đúng
-         * package của launcher qua resolveActivity.
-         *
-         * Nếu chưa xác định được Home package,
-         * dùng các dấu hiệu thông thường của launcher.
-         */
-        if (homePackage == null) {
+        String p =
+                packageName.toLowerCase();
 
-            String p =
-                    packageName.toLowerCase();
-
-            return p.contains("launcher")
-                    || p.contains("home");
-        }
-
-        return false;
+        return p.contains("launcher")
+                || p.contains("home");
     }
 
     private void scanHome() {
@@ -288,9 +266,6 @@ public class BadgeAccessibilityService extends AccessibilityService {
                 getRootInActiveWindow();
 
         if (root == null) {
-
-            clearAllBadges();
-
             return;
         }
 
@@ -304,19 +279,20 @@ public class BadgeAccessibilityService extends AccessibilityService {
                             ? ""
                             : packageName.toString();
 
-            if (!isHomePackage(
-                    currentPackage)) {
+            /*
+             * Tuyệt đối không scan khi đang mở app.
+             */
+            if (!isHomePackage(currentPackage)) {
 
-                if (isHomeVisible) {
-
-                    isHomeVisible = false;
+                if (homeVisible) {
+                    homeVisible = false;
                     clearAllBadges();
                 }
 
                 return;
             }
 
-            isHomeVisible = true;
+            homeVisible = true;
 
             selectedPackages =
                     Prefs.getSelected(this);
@@ -344,9 +320,7 @@ public class BadgeAccessibilityService extends AccessibilityService {
                     found
             );
 
-            updateBadges(
-                    positions
-            );
+            updateBadges(positions);
 
         } finally {
 
@@ -378,17 +352,13 @@ public class BadgeAccessibilityService extends AccessibilityService {
 
                 if (label != null) {
 
-                    String normalized =
+                    String name =
                             normalize(
                                     label.toString()
                             );
 
-                    if (!normalized.isEmpty()) {
-
-                        result.put(
-                                pkg,
-                                normalized
-                        );
+                    if (!name.isEmpty()) {
+                        result.put(pkg, name);
                     }
                 }
 
@@ -409,13 +379,13 @@ public class BadgeAccessibilityService extends AccessibilityService {
             return;
         }
 
-        CharSequence text =
-                node.getText();
+        String value = "";
 
         CharSequence description =
                 node.getContentDescription();
 
-        String value = "";
+        CharSequence text =
+                node.getText();
 
         if (description != null
                 && description.length() > 0) {
@@ -434,19 +404,16 @@ public class BadgeAccessibilityService extends AccessibilityService {
                     );
         }
 
-        /*
-         * Chỉ chấp nhận node có bounds hợp lệ.
-         */
         Rect bounds =
                 new Rect();
 
-        node.getBoundsInScreen(
-                bounds
-        );
+        node.getBoundsInScreen(bounds);
 
         if (!bounds.isEmpty()
                 && bounds.width() > 0
                 && bounds.height() > 0
+                && bounds.width() <= 300
+                && bounds.height() <= 300
                 && !value.isEmpty()) {
 
             for (Map.Entry<String, String> entry :
@@ -462,34 +429,31 @@ public class BadgeAccessibilityService extends AccessibilityService {
                     continue;
                 }
 
-                /*
-                 * QUAN TRỌNG:
-                 * Không còn contains hai chiều.
-                 *
-                 * Phải khớp chính xác tên ứng dụng
-                 * hoặc dạng "Tên ứng dụng ...".
-                 */
-                if (isSameAppLabel(
-                        value,
-                        label)) {
+                if (value.equals(label)
+                        || value.startsWith(label + ",")
+                        || value.equals(label + " app")
+                        || value.equals(label + " application")
+                        || value.equals(label + " button")) {
 
                     /*
-                     * Icon Home thường có kích thước
-                     * tương đối nhỏ.
-                     *
-                     * Loại bỏ các node text/container
-                     * quá lớn để tránh bắt nhầm.
+                     * Ưu tiên container clickable.
+                     * Đây giúp lấy bounds của cả icon
+                     * thay vì chỉ lấy bounds chữ.
                      */
-                    if (bounds.width() <= 300
-                            && bounds.height() <= 300) {
+                    Rect iconBounds =
+                            findClickableBounds(node);
 
-                        positions.put(
-                                pkg,
-                                new Rect(bounds)
-                        );
-
-                        found.add(pkg);
+                    if (iconBounds == null) {
+                        iconBounds =
+                                new Rect(bounds);
                     }
+
+                    positions.put(
+                            pkg,
+                            iconBounds
+                    );
+
+                    found.add(pkg);
                 }
             }
         }
@@ -498,8 +462,8 @@ public class BadgeAccessibilityService extends AccessibilityService {
                 node.getChildCount();
 
         for (int i = 0;
-             i < childCount;
-             i++) {
+                i < childCount;
+                i++) {
 
             AccessibilityNodeInfo child =
                     node.getChild(i);
@@ -518,40 +482,56 @@ public class BadgeAccessibilityService extends AccessibilityService {
         }
     }
 
-    private boolean isSameAppLabel(
-            String value,
-            String label) {
+    /*
+     * Tìm node clickable bao quanh tên app.
+     */
+    private Rect findClickableBounds(
+            AccessibilityNodeInfo node) {
 
-        if (value.equals(label)) {
-            return true;
+        AccessibilityNodeInfo current =
+                node;
+
+        for (int i = 0; i < 4; i++) {
+
+            if (current == null) {
+                break;
+            }
+
+            if (current.isClickable()) {
+
+                Rect r =
+                        new Rect();
+
+                current.getBoundsInScreen(r);
+
+                if (!r.isEmpty()
+                        && r.width() <= 400
+                        && r.height() <= 400) {
+
+                    if (current != node) {
+                        current.recycle();
+                    }
+
+                    return r;
+                }
+            }
+
+            AccessibilityNodeInfo parent =
+                    current.getParent();
+
+            if (current != node) {
+                current.recycle();
+            }
+
+            current = parent;
         }
 
-        /*
-         * Một số launcher đọc icon thành:
-         * "Facebook, button"
-         * hoặc "Facebook app"
-         */
-        if (value.startsWith(
-                label + ","
-        )) {
-            return true;
+        if (current != null
+                && current != node) {
+            current.recycle();
         }
 
-        if (value.startsWith(
-                label + " "
-        )) {
-
-            String remainder =
-                    value.substring(
-                            label.length()
-                    ).trim();
-
-            return remainder.equals("app")
-                    || remainder.equals("application")
-                    || remainder.equals("button");
-        }
-
-        return false;
+        return null;
     }
 
     private String normalize(
@@ -569,6 +549,9 @@ public class BadgeAccessibilityService extends AccessibilityService {
     private void updateBadges(
             Map<String, Rect> positions) {
 
+        /*
+         * Những badge đã tìm thấy trong lần scan này.
+         */
         Set<String> active =
                 new HashSet<>();
 
@@ -582,25 +565,23 @@ public class BadgeAccessibilityService extends AccessibilityService {
                     entry.getValue();
 
             Integer count =
-                    notificationCounts.get(
-                            pkg
-                    );
+                    notificationCounts.get(pkg);
 
             if (count == null
                     || count <= 0) {
 
+                removeBadge(pkg);
                 continue;
             }
 
             active.add(pkg);
 
-            TextView existing =
+            missingScans.put(pkg, 0);
+
+            TextView badge =
                     badgeViews.get(pkg);
 
-            Rect old =
-                    lastPositions.get(pkg);
-
-            if (existing == null) {
+            if (badge == null) {
 
                 createBadge(
                         pkg,
@@ -610,50 +591,64 @@ public class BadgeAccessibilityService extends AccessibilityService {
 
             } else {
 
-                /*
-                 * Chỉ di chuyển badge khi icon
-                 * thực sự đổi vị trí.
-                 */
+                Rect old =
+                        lastPositions.get(pkg);
+
                 if (old == null
                         || !old.equals(position)) {
 
                     moveBadge(
-                            existing,
+                            badge,
                             position
+                    );
+
+                    lastPositions.put(
+                            pkg,
+                            new Rect(position)
                     );
                 }
 
                 updateBadgeText(
-                        existing,
+                        badge,
                         count
                 );
             }
-
-            lastPositions.put(
-                    pkg,
-                    new Rect(position)
-            );
         }
 
         /*
-         * Xóa badge không còn notification
-         * hoặc không còn nhìn thấy icon.
+         * Không xóa badge ngay khi icon biến mất
+         * trong một frame animation.
+         *
+         * Phải mất 3 lần scan liên tiếp mới xóa.
          */
-        List<String> toRemove =
-                new ArrayList<>();
+        List<String> existing =
+                new ArrayList<>(
+                        badgeViews.keySet()
+                );
 
-        for (String pkg :
-                badgeViews.keySet()) {
+        for (String pkg : existing) {
 
-            if (!active.contains(pkg)) {
-                toRemove.add(pkg);
+            if (active.contains(pkg)) {
+                continue;
             }
-        }
 
-        for (String pkg :
-                toRemove) {
+            Integer missing =
+                    missingScans.get(pkg);
 
-            removeBadge(pkg);
+            if (missing == null) {
+                missing = 0;
+            }
+
+            missing++;
+
+            missingScans.put(
+                    pkg,
+                    missing
+            );
+
+            if (missing >= 3) {
+                removeBadge(pkg);
+            }
         }
     }
 
@@ -673,29 +668,28 @@ public class BadgeAccessibilityService extends AccessibilityService {
                 0xFFFFFFFF
         );
 
-        badge.setTextSize(
-                9
-        );
+        badge.setTextSize(9);
 
         badge.setGravity(
                 Gravity.CENTER
         );
 
-        GradientDrawable bg =
+        GradientDrawable background =
                 new GradientDrawable();
 
-        bg.setColor(
+        background.setColor(
                 0xFFFF3B30
         );
 
-        bg.setShape(
+        background.setShape(
                 GradientDrawable.OVAL
         );
 
-        badge.setBackground(bg);
+        badge.setBackground(
+                background
+        );
 
-        int size =
-                dp(20);
+        int size = dp(20);
 
         WindowManager.LayoutParams lp =
                 new WindowManager.LayoutParams(
@@ -711,22 +705,17 @@ public class BadgeAccessibilityService extends AccessibilityService {
                 );
 
         lp.gravity =
-                Gravity.TOP
-                        | Gravity.LEFT;
+                Gravity.TOP | Gravity.LEFT;
 
         /*
-         * Góc trên bên phải icon.
-         *
-         * Badge hơi đè vào icon,
-         * giống kiểu badge iOS.
+         * Góc trên-phải của icon.
          */
         lp.x =
                 iconBounds.right
-                        - size / 2;
+                        - size;
 
         lp.y =
-                iconBounds.top
-                        - size / 2;
+                iconBounds.top;
 
         setBadgeText(
                 badge,
@@ -750,6 +739,11 @@ public class BadgeAccessibilityService extends AccessibilityService {
                     new Rect(iconBounds)
             );
 
+            missingScans.put(
+                    pkg,
+                    0
+            );
+
         } catch (Exception ignored) {
         }
     }
@@ -764,26 +758,20 @@ public class BadgeAccessibilityService extends AccessibilityService {
             return;
         }
 
-        WindowManager.LayoutParams lp =
-                (WindowManager.LayoutParams)
-                        badge.getLayoutParams();
-
-        int size =
-                badge.getWidth();
-
-        if (size <= 0) {
-            size = dp(20);
-        }
-
-        lp.x =
-                iconBounds.right
-                        - size / 2;
-
-        lp.y =
-                iconBounds.top
-                        - size / 2;
-
         try {
+
+            WindowManager.LayoutParams lp =
+                    (WindowManager.LayoutParams)
+                            badge.getLayoutParams();
+
+            int size = dp(20);
+
+            lp.x =
+                    iconBounds.right
+                            - size;
+
+            lp.y =
+                    iconBounds.top;
 
             windowManager.updateViewLayout(
                     badge,
@@ -811,10 +799,7 @@ public class BadgeAccessibilityService extends AccessibilityService {
                 badge.getText().toString()
         )) {
 
-            setBadgeText(
-                    badge,
-                    count
-            );
+            badge.setText(text);
         }
     }
 
@@ -849,6 +834,7 @@ public class BadgeAccessibilityService extends AccessibilityService {
         }
 
         lastPositions.remove(pkg);
+        missingScans.remove(pkg);
     }
 
     private void clearAllBadges() {
@@ -865,18 +851,18 @@ public class BadgeAccessibilityService extends AccessibilityService {
         }
 
         lastPositions.clear();
+        missingScans.clear();
     }
 
     private int dp(int value) {
 
-        return (int)
-                (
-                        value
-                                * getResources()
-                                        .getDisplayMetrics()
-                                        .density
-                                + 0.5f
-                );
+        return (int) (
+                value
+                        * getResources()
+                                .getDisplayMetrics()
+                                .density
+                        + 0.5f
+        );
     }
 
     @Override
@@ -886,9 +872,7 @@ public class BadgeAccessibilityService extends AccessibilityService {
     @Override
     public void onDestroy() {
 
-        handler.removeCallbacksAndMessages(
-                null
-        );
+        handler.removeCallbacksAndMessages(null);
 
         clearAllBadges();
 
